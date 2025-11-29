@@ -124,6 +124,7 @@ func NewDefaultConfig() *structs.ConfigSet {
 
 		// WebSocket settings
 		WebSocketPort:     "8080",
+		ZipPath:           "zip",
 		S3Endpoint:        "",
 		S3AccessKeyID:     "",
 		S3SecretAccessKey: "",
@@ -2197,7 +2198,6 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	}
 
 	go uploadAlbum(albumDir, ws, resp)
-
 }
 
 func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
