@@ -63,6 +63,7 @@ var (
 	token          string
 	taskQueue      = make(chan structs.Task, 100)
 	latestPath     string
+	count          = 0
 )
 
 func NewDefaultConfig() *structs.ConfigSet {
@@ -2109,10 +2110,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-
+		count++
 		log.Printf("received: %s", msg)
 		t := structs.Task{
-			Id:   len(taskQueue) + 1,
+			Id:   count,
 			Url:  msg.Link,
 			Conn: ws,
 		}
@@ -2123,7 +2124,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	var resp structs.Response
 	var storefront, albumId string
-
+	resp.Id = id
+	var ID structs.TaskID
+	ID.Id = id
+	ws.WriteJSON(ID)
 	if strings.Contains(urlRaw, "/music-video/") {
 		fmt.Println("Music Video")
 		if debug_mode {
@@ -2203,7 +2207,6 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	} else {
 		fmt.Println("Invalid type")
 	}
-
 	go uploadAlbum(latestPath, ws, resp)
 }
 

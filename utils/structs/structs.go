@@ -145,3 +145,7 @@ type Task struct {
 	Url  string
 	Conn *websocket.Conn
 }
+
+type TaskID struct {
+	Id int `json:"id"`
+}
