@@ -57,8 +57,87 @@ var (
 	taskQueue      = make(chan structs.Task, 100)
 )
 
+func NewDefaultConfig() *structs.ConfigSet {
+	return &structs.ConfigSet{
+		// Download settings
+		Storefront:         "us", // 默认美国商店
+		MediaUserToken:     "",
+		AuthorizationToken: "",
+		Language:           "", // 空字符串表示使用默认
+
+		// Lyrics settings
+		SaveLrcFile: false,
+		LrcType:     "lyrics",
+		LrcFormat:   "lrc",
+		EmbedLrc:    true,
+
+		// Artwork settings
+		SaveAnimatedArtwork: false,
+		EmbyAnimatedArtwork: false,
+		EmbedCover:          true,
+		SaveArtistCover:     false,
+		CoverSize:           "5000x5000",
+		CoverFormat:         "jpg",
+
+		// File and folder settings
+		AlacSaveFolder:       "AM-DL downloads",
+		AtmosSaveFolder:      "AM-DL-Atmos downloads",
+		AacSaveFolder:        "AM-DL-AAC downloads",
+		AlbumFolderFormat:    "{AlbumName}",
+		PlaylistFolderFormat: "{PlaylistName}",
+		ArtistFolderFormat:   "{UrlArtistName}",
+		SongFileFormat:       "{SongNumer}. {SongName}",
+		MaxMemoryLimit:       256, // MB
+
+		// M3U8 settings
+		DecryptM3u8Port:   "127.0.0.1:10020",
+		GetM3u8Port:       "127.0.0.1:20020",
+		GetM3u8Mode:       "hires",
+		GetM3u8FromDevice: true,
+
+		// Quality settings
+		AacType:     "aac-lc",
+		AlacMax:     192000,
+		AtmosMax:    2768,
+		LimitMax:    200,
+		MVAudioType: "atmos",
+		MVMax:       2160,
+
+		// Song settings
+		AppleMasterChoice: "[M]",
+		ExplicitChoice:    "[E]",
+		CleanChoice:       "[C]",
+
+		// Playlist settings
+		UseSongInfoForPlaylist:  false,
+		DlAlbumcoverForPlaylist: false,
+
+		// Conversion settings
+		ConvertAfterDownload:       false,
+		ConvertFormat:              "flac",
+		ConvertKeepOriginal:        false,
+		ConvertSkipIfSourceMatch:   true,
+		FFmpegPath:                 "ffmpeg",
+		ConvertExtraArgs:           "",
+		ConvertWarnLossyToLossless: true,
+		ConvertSkipLossyToLossless: true,
+
+		// WebSocket settings
+		WebSocketPort:     "8080",
+		S3Endpoint:        "",
+		S3AccessKeyID:     "",
+		S3SecretAccessKey: "",
+		S3Bucket:          "",
+		S3Region:          "",
+		CDNUrl:            "",
+	}
+}
 func loadConfig() error {
 	data, err := os.ReadFile("config.yaml")
+	if os.IsNotExist(err) {
+		data, err = yaml.Marshal(NewDefaultConfig())
+		err = os.WriteFile("config.yaml", data, 0644)
+	}
 	if err != nil {
 		return err
 	}
