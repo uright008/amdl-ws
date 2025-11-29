@@ -54,6 +54,7 @@ var (
 	counter        structs.Counter
 	okDict         = make(map[string][]int)
 	token          string
+	taskQueue      = make(chan structs.Task, 100)
 )
 
 func loadConfig() error {
@@ -1827,6 +1828,12 @@ func main() {
 
 	args := pflag.Args()
 	if ws_mode {
+		go func() {
+			for task := range taskQueue {
+				downloadUrl(task.Id, task.Url, task.Conn)
+			}
+			fmt.Println("处理线程退出")
+		}()
 		http.HandleFunc("/ws", handleConnections)
 		// 启动服务器
 		log.Fatal(http.ListenAndServe(":8080", nil))
@@ -2001,112 +2008,121 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	// 循环读取客户端消息
 	for {
 		var msg structs.Request
-		var resp structs.Response
+
 		// 读取 JSON 格式消息
 		err := ws.ReadJSON(&msg)
 		if err != nil {
-			resp = structs.Response{Links: make([]string, 0), Errors: make([]string, 1), Infos: make([]string, 0)}
-			resp.Errors[0] = "read error: %v" + err.Error()
+			var resp structs.Response
+			resp.Errors = "read error: %v" + err.Error()
 			err := ws.WriteJSON(resp)
 			if err != nil {
 				print("Failed to write response in failure read:", err)
 			}
 			continue
 		}
-		var albumTotal = len(msg.Links)
-		resp = structs.Response{Links: make([]string, albumTotal+1), Errors: make([]string, albumTotal+1), Infos: make([]string, albumTotal+1)}
+
 		log.Printf("received: %s", msg)
-		for albumNum, urlRaw := range msg.Links {
-			albumNum++
-			fmt.Printf("Queue %d of %d: ", albumNum, albumTotal)
-			var storefront, albumId string
-
-			if strings.Contains(urlRaw, "/music-video/") {
-				fmt.Println("Music Video")
-				if debug_mode {
-					continue
-				}
-				if len(Config.MediaUserToken) <= 50 {
-					resp.Infos[albumNum] = ": meida-user-token is not set, skip MV dl"
-					continue
-				}
-				if _, err := exec.LookPath("mp4decrypt"); err != nil {
-					resp.Infos[albumNum] = ": mp4decrypt is not found, skip MV dl"
-					continue
-				}
-				mvSaveDir := strings.NewReplacer(
-					"{ArtistName}", "",
-					"{UrlArtistName}", "",
-					"{ArtistId}", "",
-				).Replace(Config.ArtistFolderFormat)
-				if mvSaveDir != "" {
-					mvSaveDir = filepath.Join(Config.AlacSaveFolder, forbiddenNames.ReplaceAllString(mvSaveDir, "_"))
-				} else {
-					mvSaveDir = Config.AlacSaveFolder
-				}
-				storefront, albumId = checkUrlMv(urlRaw)
-				err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
-				if err != nil {
-					resp.Errors[albumNum] = "Failed to dl MV:" + err.Error()
-					counter.Error++
-					continue
-				}
-				counter.Success++
-				continue
-			}
-			if strings.Contains(urlRaw, "/song/") {
-				fmt.Printf("Song->")
-				storefront, songId := checkUrlSong(urlRaw)
-				if storefront == "" || songId == "" {
-					resp.Errors[albumNum] = "Invalid song URL format."
-					continue
-				}
-				err := ripSong(songId, token, storefront, Config.MediaUserToken)
-				if err != nil {
-					resp.Errors[albumNum] = "Failed to rip song:" + err.Error()
-				}
-				continue
-			}
-			parse, err := url.Parse(urlRaw)
-			if err != nil {
-				resp.Errors[albumNum] = "Invalid URL:" + err.Error()
-			}
-			var urlArg_i = parse.Query().Get("i")
-
-			if strings.Contains(urlRaw, "/album/") {
-				fmt.Println("Album")
-				storefront, albumId = checkUrl(urlRaw)
-				err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
-				if err != nil {
-					resp.Errors[albumNum] = "Failed to rip album:" + err.Error()
-				}
-			} else if strings.Contains(urlRaw, "/playlist/") {
-				fmt.Println("Playlist")
-				storefront, albumId = checkUrlPlaylist(urlRaw)
-				err := ripPlaylist(albumId, token, storefront, Config.MediaUserToken)
-				if err != nil {
-					resp.Errors[albumNum] = "Failed to rip playlist:" + err.Error()
-				}
-			} else if strings.Contains(urlRaw, "/station/") {
-				fmt.Printf("Station")
-				storefront, albumId = checkUrlStation(urlRaw)
-				if len(Config.MediaUserToken) <= 50 {
-					resp.Infos[albumNum] = "meida-user-token is not set, skip station dl"
-					continue
-				}
-				err := ripStation(albumId, token, storefront, Config.MediaUserToken)
-				if err != nil {
-					resp.Errors[albumNum] = "Failed to rip station:" + err.Error()
-				}
-			} else {
-				fmt.Println("Invalid type")
-			}
+		t := structs.Task{
+			Id:   len(taskQueue) + 1,
+			Url:  msg.Link,
+			Conn: ws,
 		}
-		if err := ws.WriteJSON(resp); err != nil {
-			log.Printf("write error: %v", err)
-			break
-		}
+		taskQueue <- t
 	}
+}
+
+func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
+	var resp structs.Response
+	var storefront, albumId string
+
+	if strings.Contains(urlRaw, "/music-video/") {
+		fmt.Println("Music Video")
+		if debug_mode {
+			return
+		}
+		if len(Config.MediaUserToken) <= 50 {
+			resp.Infos = ": meida-user-token is not set, skip MV dl"
+			return
+		}
+		if _, err := exec.LookPath("mp4decrypt"); err != nil {
+			resp.Infos = ": mp4decrypt is not found, skip MV dl"
+			return
+		}
+		mvSaveDir := strings.NewReplacer(
+			"{ArtistName}", "",
+			"{UrlArtistName}", "",
+			"{ArtistId}", "",
+		).Replace(Config.ArtistFolderFormat)
+		if mvSaveDir != "" {
+			mvSaveDir = filepath.Join(Config.AlacSaveFolder, forbiddenNames.ReplaceAllString(mvSaveDir, "_"))
+		} else {
+			mvSaveDir = Config.AlacSaveFolder
+		}
+		storefront, albumId = checkUrlMv(urlRaw)
+		err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
+		if err != nil {
+			resp.Errors = "Failed to dl MV:" + err.Error()
+			counter.Error++
+			return
+		}
+		counter.Success++
+		return
+	}
+	if strings.Contains(urlRaw, "/song/") {
+		fmt.Printf("Song->")
+		storefront, songId := checkUrlSong(urlRaw)
+		if storefront == "" || songId == "" {
+			resp.Errors = "Invalid song URL format."
+			return
+		}
+		err := ripSong(songId, token, storefront, Config.MediaUserToken)
+		if err != nil {
+			resp.Errors = "Failed to rip song:" + err.Error()
+		}
+		return
+	}
+	parse, err := url.Parse(urlRaw)
+	if err != nil {
+		resp.Errors = "Invalid URL:" + err.Error()
+	}
+	var urlArg_i = parse.Query().Get("i")
+
+	if strings.Contains(urlRaw, "/album/") {
+		fmt.Println("Album")
+		storefront, albumId = checkUrl(urlRaw)
+		err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
+		if err != nil {
+			resp.Errors = "Failed to rip album:" + err.Error()
+		}
+	} else if strings.Contains(urlRaw, "/playlist/") {
+		fmt.Println("Playlist")
+		storefront, albumId = checkUrlPlaylist(urlRaw)
+		err := ripPlaylist(albumId, token, storefront, Config.MediaUserToken)
+		if err != nil {
+			resp.Errors = "Failed to rip playlist:" + err.Error()
+		}
+	} else if strings.Contains(urlRaw, "/station/") {
+		fmt.Printf("Station")
+		storefront, albumId = checkUrlStation(urlRaw)
+		if len(Config.MediaUserToken) <= 50 {
+			resp.Infos = "meida-user-token is not set, skip station dl"
+			return
+		}
+		err := ripStation(albumId, token, storefront, Config.MediaUserToken)
+		if err != nil {
+			resp.Errors = "Failed to rip station:" + err.Error()
+		}
+	} else {
+		fmt.Println("Invalid type")
+	}
+	if err := ws.WriteJSON(resp); err != nil {
+		log.Printf("write error: %v", err)
+		return
+	}
+}
+
+func uploadAlbum(albumDir string, ws *websocket.Conn) {
+
 }
 
 func mvDownloader(adamID string, saveDir string, token string, storefront string, mediaUserToken string, track *task.Track) error {
