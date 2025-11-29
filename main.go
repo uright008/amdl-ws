@@ -2112,6 +2112,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	var resp structs.Response
+	var albumDir string
 	var storefront, albumId string
 
 	if strings.Contains(urlRaw, "/music-video/") {
@@ -2194,14 +2195,17 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	} else {
 		fmt.Println("Invalid type")
 	}
+
+	go uploadAlbum(albumDir, ws, resp)
+
+}
+
+func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
+
 	if err := ws.WriteJSON(resp); err != nil {
 		log.Printf("write error: %v", err)
 		return
 	}
-}
-
-func uploadAlbum(albumDir string, ws *websocket.Conn) {
-
 }
 
 func mvDownloader(adamID string, saveDir string, token string, storefront string, mediaUserToken string, track *task.Track) error {
