@@ -108,8 +108,9 @@ type Request struct {
 }
 
 type Response struct {
-	Links []string `json:"links"`
-	Error string   `json:"error"`
+	Links  []string `json:"links"`
+	Errors []string `json:"error"`
+	Infos  []string `json:"info"`
 }
 
 type Auth struct {

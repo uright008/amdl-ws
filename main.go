@@ -2001,16 +2001,24 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	// 循环读取客户端消息
 	for {
 		var msg structs.Request
+		var resp structs.Response
 		// 读取 JSON 格式消息
 		err := ws.ReadJSON(&msg)
 		if err != nil {
-			log.Printf("read error: %v", err)
-			break
+			resp = structs.Response{Links: make([]string, 0), Errors: make([]string, 1), Infos: make([]string, 0)}
+			resp.Errors[0] = "read error: %v" + err.Error()
+			err := ws.WriteJSON(resp)
+			if err != nil {
+				print("Failed to write response in failure read:", err)
+			}
+			continue
 		}
 		var albumTotal = len(msg.Links)
+		resp = structs.Response{Links: make([]string, albumTotal+1), Errors: make([]string, albumTotal+1), Infos: make([]string, albumTotal+1)}
 		log.Printf("received: %s", msg)
 		for albumNum, urlRaw := range msg.Links {
-			fmt.Printf("Queue %d of %d: ", albumNum+1, albumTotal)
+			albumNum++
+			fmt.Printf("Queue %d of %d: ", albumNum, albumTotal)
 			var storefront, albumId string
 
 			if strings.Contains(urlRaw, "/music-video/") {
@@ -2018,15 +2026,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				if debug_mode {
 					continue
 				}
-				counter.Total++
 				if len(Config.MediaUserToken) <= 50 {
-					fmt.Println(": meida-user-token is not set, skip MV dl")
-					counter.Success++
+					resp.Infos[albumNum] = ": meida-user-token is not set, skip MV dl"
 					continue
 				}
 				if _, err := exec.LookPath("mp4decrypt"); err != nil {
-					fmt.Println(": mp4decrypt is not found, skip MV dl")
-					counter.Success++
+					resp.Infos[albumNum] = ": mp4decrypt is not found, skip MV dl"
 					continue
 				}
 				mvSaveDir := strings.NewReplacer(
@@ -2042,7 +2047,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				storefront, albumId = checkUrlMv(urlRaw)
 				err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
 				if err != nil {
-					fmt.Println("\u26A0 Failed to dl MV:", err)
+					resp.Errors[albumNum] = "Failed to dl MV:" + err.Error()
 					counter.Error++
 					continue
 				}
@@ -2053,18 +2058,18 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				fmt.Printf("Song->")
 				storefront, songId := checkUrlSong(urlRaw)
 				if storefront == "" || songId == "" {
-					fmt.Println("Invalid song URL format.")
+					resp.Errors[albumNum] = "Invalid song URL format."
 					continue
 				}
 				err := ripSong(songId, token, storefront, Config.MediaUserToken)
 				if err != nil {
-					fmt.Println("Failed to rip song:", err)
+					resp.Errors[albumNum] = "Failed to rip song:" + err.Error()
 				}
 				continue
 			}
 			parse, err := url.Parse(urlRaw)
 			if err != nil {
-				log.Fatalf("Invalid URL: %v", err)
+				resp.Errors[albumNum] = "Invalid URL:" + err.Error()
 			}
 			var urlArg_i = parse.Query().Get("i")
 
@@ -2073,31 +2078,31 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 				storefront, albumId = checkUrl(urlRaw)
 				err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
 				if err != nil {
-					fmt.Println("Failed to rip album:", err)
+					resp.Errors[albumNum] = "Failed to rip album:" + err.Error()
 				}
 			} else if strings.Contains(urlRaw, "/playlist/") {
 				fmt.Println("Playlist")
 				storefront, albumId = checkUrlPlaylist(urlRaw)
 				err := ripPlaylist(albumId, token, storefront, Config.MediaUserToken)
 				if err != nil {
-					fmt.Println("Failed to rip playlist:", err)
+					resp.Errors[albumNum] = "Failed to rip playlist:" + err.Error()
 				}
 			} else if strings.Contains(urlRaw, "/station/") {
 				fmt.Printf("Station")
 				storefront, albumId = checkUrlStation(urlRaw)
 				if len(Config.MediaUserToken) <= 50 {
-					fmt.Println(": meida-user-token is not set, skip station dl")
+					resp.Infos[albumNum] = "meida-user-token is not set, skip station dl"
 					continue
 				}
 				err := ripStation(albumId, token, storefront, Config.MediaUserToken)
 				if err != nil {
-					fmt.Println("Failed to rip station:", err)
+					resp.Errors[albumNum] = "Failed to rip station:" + err.Error()
 				}
 			} else {
 				fmt.Println("Invalid type")
 			}
 		}
-		if err := ws.WriteJSON(msg); err != nil {
+		if err := ws.WriteJSON(resp); err != nil {
 			log.Printf("write error: %v", err)
 			break
 		}
