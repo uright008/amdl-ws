@@ -29,6 +29,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
+	"github.com/gorilla/websocket"
 	"github.com/grafov/m3u8"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/pflag"
@@ -52,6 +53,7 @@ var (
 	Config         structs.ConfigSet
 	counter        structs.Counter
 	okDict         = make(map[string][]int)
+	token          string
 )
 
 func loadConfig() error {
@@ -1341,7 +1343,7 @@ func ripAlbum(albumId string, token string, storefront string, mediaUserToken st
 	os.MkdirAll(albumFolderPath, os.ModePerm)
 	album.SaveName = albumFolderName
 	fmt.Println(albumFolderName)
-	if Config.SaveArtistCover && len(meta.Data[0].Relationships.Artists.Data) > 0{
+	if Config.SaveArtistCover && len(meta.Data[0].Relationships.Artists.Data) > 0 {
 		if meta.Data[0].Relationships.Artists.Data[0].Attributes.Artwork.Url != "" {
 			_, err = writeCover(singerFolder, "folder", meta.Data[0].Relationships.Artists.Data[0].Attributes.Artwork.Url)
 			if err != nil {
@@ -1794,12 +1796,14 @@ func main() {
 		}
 	}
 	var search_type string
+	var ws_mode bool
 	pflag.StringVar(&search_type, "search", "", "Search for 'album', 'song', or 'artist'. Provide query after flags.")
 	pflag.BoolVar(&dl_atmos, "atmos", false, "Enable atmos download mode")
 	pflag.BoolVar(&dl_aac, "aac", false, "Enable adm-aac download mode")
 	pflag.BoolVar(&dl_select, "select", false, "Enable selective download")
 	pflag.BoolVar(&dl_song, "song", false, "Enable single song download mode")
 	pflag.BoolVar(&artist_select, "all-album", false, "Download all artist albums")
+	pflag.BoolVar(&ws_mode, "ws", false, "Run as a websocket server")
 	pflag.BoolVar(&debug_mode, "debug", false, "Enable debug mode to show audio quality information")
 	alac_max = pflag.Int("alac-max", Config.AlacMax, "Specify the max quality for download alac")
 	atmos_max = pflag.Int("atmos-max", Config.AtmosMax, "Specify the max quality for download atmos")
@@ -1822,7 +1826,11 @@ func main() {
 	Config.MVMax = *mv_max
 
 	args := pflag.Args()
-
+	if ws_mode {
+		http.HandleFunc("/ws", handleConnections)
+		// 启动服务器
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}
 	if search_type != "" {
 		if len(args) == 0 {
 			fmt.Println("Error: --search flag requires a query.")
@@ -1967,6 +1975,132 @@ func main() {
 		fmt.Scanln()
 		fmt.Println("Start trying again...")
 		counter = structs.Counter{}
+	}
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+func handleConnections(w http.ResponseWriter, r *http.Request) {
+	// 升级 HTTP 连接为 WebSocket
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("upgrade error: %v", err)
+		return
+	}
+	defer func(ws *websocket.Conn) {
+		err := ws.Close()
+		if err != nil {
+
+		}
+	}(ws)
+
+	// 循环读取客户端消息
+	for {
+		var msg structs.Request
+		// 读取 JSON 格式消息
+		err := ws.ReadJSON(&msg)
+		if err != nil {
+			log.Printf("read error: %v", err)
+			break
+		}
+		var albumTotal = len(msg.Links)
+		log.Printf("received: %s", msg)
+		for albumNum, urlRaw := range msg.Links {
+			fmt.Printf("Queue %d of %d: ", albumNum+1, albumTotal)
+			var storefront, albumId string
+
+			if strings.Contains(urlRaw, "/music-video/") {
+				fmt.Println("Music Video")
+				if debug_mode {
+					continue
+				}
+				counter.Total++
+				if len(Config.MediaUserToken) <= 50 {
+					fmt.Println(": meida-user-token is not set, skip MV dl")
+					counter.Success++
+					continue
+				}
+				if _, err := exec.LookPath("mp4decrypt"); err != nil {
+					fmt.Println(": mp4decrypt is not found, skip MV dl")
+					counter.Success++
+					continue
+				}
+				mvSaveDir := strings.NewReplacer(
+					"{ArtistName}", "",
+					"{UrlArtistName}", "",
+					"{ArtistId}", "",
+				).Replace(Config.ArtistFolderFormat)
+				if mvSaveDir != "" {
+					mvSaveDir = filepath.Join(Config.AlacSaveFolder, forbiddenNames.ReplaceAllString(mvSaveDir, "_"))
+				} else {
+					mvSaveDir = Config.AlacSaveFolder
+				}
+				storefront, albumId = checkUrlMv(urlRaw)
+				err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
+				if err != nil {
+					fmt.Println("\u26A0 Failed to dl MV:", err)
+					counter.Error++
+					continue
+				}
+				counter.Success++
+				continue
+			}
+			if strings.Contains(urlRaw, "/song/") {
+				fmt.Printf("Song->")
+				storefront, songId := checkUrlSong(urlRaw)
+				if storefront == "" || songId == "" {
+					fmt.Println("Invalid song URL format.")
+					continue
+				}
+				err := ripSong(songId, token, storefront, Config.MediaUserToken)
+				if err != nil {
+					fmt.Println("Failed to rip song:", err)
+				}
+				continue
+			}
+			parse, err := url.Parse(urlRaw)
+			if err != nil {
+				log.Fatalf("Invalid URL: %v", err)
+			}
+			var urlArg_i = parse.Query().Get("i")
+
+			if strings.Contains(urlRaw, "/album/") {
+				fmt.Println("Album")
+				storefront, albumId = checkUrl(urlRaw)
+				err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
+				if err != nil {
+					fmt.Println("Failed to rip album:", err)
+				}
+			} else if strings.Contains(urlRaw, "/playlist/") {
+				fmt.Println("Playlist")
+				storefront, albumId = checkUrlPlaylist(urlRaw)
+				err := ripPlaylist(albumId, token, storefront, Config.MediaUserToken)
+				if err != nil {
+					fmt.Println("Failed to rip playlist:", err)
+				}
+			} else if strings.Contains(urlRaw, "/station/") {
+				fmt.Printf("Station")
+				storefront, albumId = checkUrlStation(urlRaw)
+				if len(Config.MediaUserToken) <= 50 {
+					fmt.Println(": meida-user-token is not set, skip station dl")
+					continue
+				}
+				err := ripStation(albumId, token, storefront, Config.MediaUserToken)
+				if err != nil {
+					fmt.Println("Failed to rip station:", err)
+				}
+			} else {
+				fmt.Println("Invalid type")
+			}
+		}
+		if err := ws.WriteJSON(msg); err != nil {
+			log.Printf("write error: %v", err)
+			break
+		}
 	}
 }
 
