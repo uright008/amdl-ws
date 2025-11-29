@@ -537,6 +537,7 @@
                     addLog(`错误: ${message.error}`, 'error');
                     if (message.id && tasks[message.id]) {
                         tasks[message.id].status = 'failed';
+                        tasks[message.id].endTime = new Date();
                         updateTasksList();
                     }
                 }
@@ -545,20 +546,11 @@
                     addLog(`下载链接: ${message.link}`, 'info');
                     if (message.id && tasks[message.id]) {
                         tasks[message.id].status = 'completed';
+                        tasks[message.id].endTime = new Date();
                         updateTasksList();
                     }
                     // 自动触发下载
                     autoDownload(message.link);
-                }
-                // 检查信息字段
-                else if (message.info) {
-                    addLog(`信息: ${message.info}`, 'info');
-                    if (message.id && tasks[message.id]) {
-                        if (message.info.includes('上传') || message.info.includes('完成')) {
-                            tasks[message.id].status = 'completed';
-                        }
-                        updateTasksList();
-                    }
                 }
                 // 检查任务 ID 响应（仅当没有其他特殊字段时）
                 else if (message.id !== undefined && message.id) {
@@ -567,7 +559,8 @@
                             id: message.id,
                             url: document.getElementById('urlInput').value,
                             status: 'processing',
-                            startTime: new Date()
+                            startTime: new Date(),
+                            endTime: null,
                         };
                     }
                     addLog(`任务 ID: ${message.id}`, 'info');
@@ -684,7 +677,9 @@
 
             tasksList.innerHTML = taskIds.map(id => {
                 const task = tasks[id];
-                const duration = Math.floor((new Date() - task.startTime) / 1000);
+                let duration
+                if(task.endTime===null) duration = Math.floor((new Date() - task.startTime) / 1000);
+                else duration = Math.floor((task.endTime - task.startTime) / 1000);
                 return `
                     <div class="task-item">
                         <div class="task-info">
