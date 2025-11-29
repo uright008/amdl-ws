@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+//go:embed index.html
+var indexHTML string
 
 var (
 	forbiddenNames = regexp.MustCompile(`[/\\<>:"|?*]`)
@@ -1929,12 +1933,7 @@ func main() {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				data, err := os.ReadFile("index.html")
-				if err != nil {
-					http.NotFound(w, r)
-					return
-				}
-				w.Write(data)
+				w.Write([]byte(indexHTML))
 			} else {
 				http.NotFound(w, r)
 			}
@@ -2098,34 +2097,26 @@ var upgrader = websocket.Upgrader{
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
-	// 升级 HTTP 连接为 WebSocket
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		return
 	}
-	defer func(ws *websocket.Conn) {
-		err := ws.Close()
-		if err != nil {
+	defer ws.Close()
 
-		}
-	}(ws)
-
-	// 循环读取客户端消息
 	for {
 		var msg structs.Request
-
-		// 读取 JSON 格式消息
 		err := ws.ReadJSON(&msg)
 		if err != nil {
-			var resp structs.Response
-			resp.Error = "read error: %v" + err.Error()
-			err := ws.WriteJSON(resp)
-			if err != nil {
-				print("Failed to write response in failure read:", err)
+			// 检查是否为正常关闭
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Println("WebSocket closed normally")
+			} else {
+				log.Printf("WebSocket read error: %v", err)
 			}
-			continue
+			return
 		}
+
 		count++
 		log.Printf("received: %s", msg)
 		t := structs.Task{

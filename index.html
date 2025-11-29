@@ -446,16 +446,21 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             connectWebSocket();
+            // 每秒更新一次任务列表的耗时显示
+            setInterval(() => {
+                if (Object.keys(tasks).length > 0) {
+                    updateTasksList();
+                }
+            }, 1000);
         });
 
         // 连接 WebSocket
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.hostname;
-            const port = window.location.port || (protocol === 'wss:' ? 443 : 80);
+            const port = window.location.port;
 
-            // 如果是本地开发，使用配置的端口 8080
-            const wsUrl = `${protocol}//${host}:8080/ws`;
+            const wsUrl = `${protocol}//${host}:${port}/ws`;
 
             try {
                 ws = new WebSocket(wsUrl);
