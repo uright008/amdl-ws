@@ -1925,8 +1925,24 @@ func main() {
 			fmt.Println("处理线程退出")
 		}()
 		http.HandleFunc("/ws", handleConnections)
+		// 提供静态文件
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				data, err := os.ReadFile("index.html")
+				if err != nil {
+					http.NotFound(w, r)
+					return
+				}
+				w.Write(data)
+			} else {
+				http.NotFound(w, r)
+			}
+		})
 		// 启动服务器
-		log.Fatal(http.ListenAndServe(":"+Config.WebSocketPort, nil))
+		addr := ":" + Config.WebSocketPort
+		fmt.Printf("WebSocket 服务器已启动，访问地址: http://localhost%s\n", addr)
+		log.Fatal(http.ListenAndServe(addr, nil))
 	}
 	if search_type != "" {
 		if len(args) == 0 {

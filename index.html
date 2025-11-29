@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apple Music ALAC 下载器 - WebSocket</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            padding: 30px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 12px 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #999;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #4caf50;
+            border-left-color: #4caf50;
+        }
+
+        .status-dot.disconnected {
+            background: #f44336;
+            border-left-color: #f44336;
+            animation: none;
+        }
+
+        .connection-status.connected {
+            border-left-color: #4caf50;
+        }
+
+        .connection-status.disconnected {
+            border-left-color: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 2px solid #e0e0e0;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #e8e8e8;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .logs-container {
+            background: #f9f9f9;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: 400px;
+        }
+
+        .logs-header {
+            background: #f0f0f0;
+            padding: 12px 15px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logs-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+
+        .log-entry.info {
+            background: #e3f2fd;
+            color: #1976d2;
+            border-left: 3px solid #1976d2;
+        }
+
+        .log-entry.success {
+            background: #e8f5e9;
+            color: #388e3c;
+            border-left: 3px solid #388e3c;
+        }
+
+        .log-entry.error {
+            background: #ffebee;
+            color: #d32f2f;
+            border-left: 3px solid #d32f2f;
+        }
+
+        .log-entry.warning {
+            background: #fff3e0;
+            color: #f57c00;
+            border-left: 3px solid #f57c00;
+        }
+
+        .log-entry timestamp {
+            color: #999;
+            font-size: 11px;
+        }
+
+        .task-item {
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-info {
+            flex: 1;
+        }
+
+        .task-id {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .task-url {
+            color: #666;
+            font-size: 12px;
+            word-break: break-all;
+            margin-bottom: 5px;
+        }
+
+        .task-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .task-status.pending {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .task-status.processing {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .task-status.completed {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .task-status.failed {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .tasks-container {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 2px solid #e0e0e0;
+        }
+
+        .tasks-header {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .tasks-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                border-radius: 0;
+            }
+
+            .header {
+                padding: 20px 15px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            .main-content {
+                padding: 20px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                flex: none;
+            }
+
+            .logs-container {
+                max-height: 300px;
+            }
+
+            .task-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+        .scroll-to-bottom {
+            text-align: center;
+            padding: 10px;
+            color: #999;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .scroll-to-bottom:hover {
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>🎵 Apple Music ALAC 下载器</h1>
+            <p>通过 WebSocket 实时下载 Apple Music 音乐</p>
+        </div>
+
+        <!-- 主要内容 -->
+        <div class="main-content">
+            <!-- 连接状态 -->
+            <div class="connection-status disconnected" id="connectionStatus">
+                <div class="status-dot disconnected" id="statusDot"></div>
+                <span id="statusText">未连接</span>
+            </div>
+
+            <!-- 输入框 -->
+            <div class="input-group">
+                <label for="urlInput">Apple Music 链接</label>
+                <input
+                    type="text"
+                    id="urlInput"
+                    placeholder="例如: https://music.apple.com/us/album/1989/..."
+                    onkeypress="handleKeyPress(event)"
+                >
+            </div>
+
+            <!-- 按钮组 -->
+            <div class="button-group">
+                <button class="btn-primary" id="downloadBtn" onclick="sendDownloadRequest()" disabled>
+                    📥 开始下载
+                </button>
+                <button class="btn-secondary" onclick="clearLogs()">
+                    🗑️ 清空日志
+                </button>
+            </div>
+
+            <!-- 日志容器 -->
+            <div class="logs-container">
+                <div class="logs-header">
+                    <span>📋 实时日志</span>
+                    <span id="logCount">0 条</span>
+                </div>
+                <div class="logs-body" id="logsBody">
+                    <div class="empty-state">
+                        <p>等待连接...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 任务列表 -->
+            <div class="tasks-container">
+                <div class="tasks-header">
+                    📊 任务列表
+                </div>
+                <div class="tasks-list" id="tasksList">
+                    <div class="empty-state">
+                        <p>暂无任务</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let ws;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectDelay = 3000;
+        let logs = [];
+        let tasks = {};
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            connectWebSocket();
+        });
+
+        // 连接 WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname;
+            const port = window.location.port || (protocol === 'wss:' ? 443 : 80);
+
+            // 如果是本地开发，使用配置的端口 8080
+            const wsUrl = `${protocol}//${host}:8080/ws`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    addLog('已连接到服务器', 'success');
+                    updateConnectionStatus(true);
+                    reconnectAttempts = 0;
+                    document.getElementById('downloadBtn').disabled = false;
+                };
+
+                ws.onmessage = (event) => {
+                    handleMessage(event.data);
+                };
+
+                ws.onerror = (error) => {
+                    addLog(`WebSocket 错误: ${error}`, 'error');
+                    updateConnectionStatus(false);
+                };
+
+                ws.onclose = () => {
+                    addLog('连接已断开', 'warning');
+                    updateConnectionStatus(false);
+                    document.getElementById('downloadBtn').disabled = true;
+                    attemptReconnect();
+                };
+            } catch (error) {
+                addLog(`连接失败: ${error.message}`, 'error');
+                updateConnectionStatus(false);
+            }
+        }
+
+        // 重新连接
+        function attemptReconnect() {
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                addLog(`${reconnectDelay / 1000} 秒后尝试重新连接... (${reconnectAttempts}/${maxReconnectAttempts})`, 'warning');
+                setTimeout(() => {
+                    connectWebSocket();
+                }, reconnectDelay);
+            } else {
+                addLog('无法连接到服务器，请检查服务是否运行', 'error');
+            }
+        }
+
+        // 更新连接状态
+        function updateConnectionStatus(connected) {
+            const statusElement = document.getElementById('connectionStatus');
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+
+            if (connected) {
+                statusElement.classList.add('connected');
+                statusElement.classList.remove('disconnected');
+                statusDot.classList.add('connected');
+                statusDot.classList.remove('disconnected');
+                statusText.textContent = '已连接';
+            } else {
+                statusElement.classList.remove('connected');
+                statusElement.classList.add('disconnected');
+                statusDot.classList.remove('connected');
+                statusDot.classList.add('disconnected');
+                statusText.textContent = '未连接';
+            }
+        }
+
+        // 处理消息
+        function handleMessage(data) {
+            try {
+                const message = JSON.parse(data);
+
+                // 优先检查错误
+                if (message.error) {
+                    addLog(`错误: ${message.error}`, 'error');
+                    if (message.id && tasks[message.id]) {
+                        tasks[message.id].status = 'failed';
+                        updateTasksList();
+                    }
+                }
+                // 检查下载链接（优先于 ID 检查）
+                else if (message.link) {
+                    addLog(`下载链接: ${message.link}`, 'info');
+                    if (message.id && tasks[message.id]) {
+                        tasks[message.id].status = 'completed';
+                        updateTasksList();
+                    }
+                    // 自动触发下载
+                    autoDownload(message.link);
+                }
+                // 检查信息字段
+                else if (message.info) {
+                    addLog(`信息: ${message.info}`, 'info');
+                    if (message.id && tasks[message.id]) {
+                        if (message.info.includes('上传') || message.info.includes('完成')) {
+                            tasks[message.id].status = 'completed';
+                        }
+                        updateTasksList();
+                    }
+                }
+                // 检查任务 ID 响应（仅当没有其他特殊字段时）
+                else if (message.id !== undefined && message.id) {
+                    if (!tasks[message.id]) {
+                        tasks[message.id] = {
+                            id: message.id,
+                            url: document.getElementById('urlInput').value,
+                            status: 'processing',
+                            startTime: new Date()
+                        };
+                    }
+                    addLog(`任务 ID: ${message.id}`, 'info');
+                    updateTasksList();
+                }
+            } catch (error) {
+                addLog(`解析消息失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 发送下载请求
+        function sendDownloadRequest() {
+            const url = document.getElementById('urlInput').value.trim();
+
+            if (!url) {
+                addLog('请输入 Apple Music 链接', 'warning');
+                return;
+            }
+
+            if (!url.includes('music.apple.com')) {
+                addLog('请输入有效的 Apple Music 链接', 'warning');
+                return;
+            }
+
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addLog('未连接到服务器', 'error');
+                return;
+            }
+
+            try {
+                const request = { link: url };
+                ws.send(JSON.stringify(request));
+                addLog(`发送下载请求: ${url}`, 'info');
+            } catch (error) {
+                addLog(`发送请求失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 处理键盘事件
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendDownloadRequest();
+            }
+        }
+
+        // 自动下载
+        function autoDownload(link) {
+            try {
+                const a = document.createElement('a');
+                a.href = link;
+                a.download = '';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                addLog('已触发下载', 'success');
+            } catch (error) {
+                addLog(`自动下载失败: ${error.message}`, 'error');
+                // 如果自动下载失败，提供手动下载链接
+                addLog(`请手动下载: ${link}`, 'warning');
+            }
+        }
+
+        // 添加日志
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString('zh-CN');
+            const logEntry = {
+                message,
+                type,
+                timestamp
+            };
+            logs.push(logEntry);
+
+            // 保持日志数量在 1000 以内
+            if (logs.length > 1000) {
+                logs.shift();
+            }
+
+            renderLogs();
+        }
+
+        // 渲染日志
+        function renderLogs() {
+            const logsBody = document.getElementById('logsBody');
+            const logCount = document.getElementById('logCount');
+
+            if (logs.length === 0) {
+                logsBody.innerHTML = '<div class="empty-state"><p>等待消息...</p></div>';
+                logCount.textContent = '0 条';
+                return;
+            }
+
+            logsBody.innerHTML = logs.map(log => `
+                <div class="log-entry ${log.type}">
+                    <span class="timestamp">[${log.timestamp}]</span>
+                    <span>${escapeHtml(log.message)}</span>
+                </div>
+            `).join('');
+
+            logCount.textContent = `${logs.length} 条`;
+
+            // 自动滚动到底部
+            logsBody.scrollTop = logsBody.scrollHeight;
+        }
+
+        // 更新任务列表
+        function updateTasksList() {
+            const tasksList = document.getElementById('tasksList');
+            const taskIds = Object.keys(tasks);
+
+            if (taskIds.length === 0) {
+                tasksList.innerHTML = '<div class="empty-state"><p>暂无任务</p></div>';
+                return;
+            }
+
+            tasksList.innerHTML = taskIds.map(id => {
+                const task = tasks[id];
+                const duration = Math.floor((new Date() - task.startTime) / 1000);
+                return `
+                    <div class="task-item">
+                        <div class="task-info">
+                            <div class="task-id">任务 #${task.id}</div>
+                            <div class="task-url">${escapeHtml(task.url)}</div>
+                            <div>
+                                <span class="task-status ${task.status}">${getStatusText(task.status)}</span>
+                                <span style="color: #999; font-size: 12px; margin-left: 10px;">耗时: ${duration}s</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 获取状态文本
+        function getStatusText(status) {
+            const statusMap = {
+                pending: '待处理',
+                processing: '处理中',
+                completed: '已完成',
+                failed: '失败'
+            };
+            return statusMap[status] || status;
+        }
+
+        // 清空日志
+        function clearLogs() {
+            logs = [];
+            renderLogs();
+            addLog('日志已清空', 'info');
+        }
+
+        // HTML 转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
+
