@@ -1518,6 +1518,7 @@ func ripAlbum(albumId string, token string, storefront string, mediaUserToken st
 			for i := range album.Tracks {
 				if urlArg_i == album.Tracks[i].ID {
 					ripTrack(&album.Tracks[i], token, mediaUserToken)
+					latestPath = albumFolderPath
 					return nil
 				}
 			}
@@ -2142,10 +2143,12 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		}
 		if len(Config.MediaUserToken) <= 50 {
 			resp.Info = ": meida-user-token is not set, skip MV dl"
+
 			return
 		}
 		if _, err := exec.LookPath("mp4decrypt"); err != nil {
 			resp.Info = ": mp4decrypt is not found, skip MV dl"
+
 			return
 		}
 		mvSaveDir := strings.NewReplacer(
@@ -2162,23 +2165,10 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
 		if err != nil {
 			resp.Error = "Failed to dl MV:" + err.Error()
-			counter.Error++
+
 			return
 		}
 		latestPath = mvSaveDir
-	}
-	if strings.Contains(urlRaw, "/song/") {
-		fmt.Printf("Song->")
-		storefront, songId := checkUrlSong(urlRaw)
-		if storefront == "" || songId == "" {
-			resp.Error = "Invalid song URL format."
-			return
-		}
-		err := ripSong(songId, token, storefront, Config.MediaUserToken)
-		if err != nil {
-			resp.Error = "Failed to rip song:" + err.Error()
-		}
-		return
 	}
 	parse, err := url.Parse(urlRaw)
 	if err != nil {
@@ -2186,7 +2176,19 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	}
 	var urlArg_i = parse.Query().Get("i")
 
-	if strings.Contains(urlRaw, "/album/") {
+	if strings.Contains(urlRaw, "/song/") {
+		fmt.Printf("Song")
+		storefront, songId := checkUrlSong(urlRaw)
+		if storefront == "" || songId == "" {
+			resp.Error = "Invalid song URL format."
+
+		}
+		err := ripSong(songId, token, storefront, Config.MediaUserToken)
+		if err != nil {
+			resp.Error = "Failed to rip song:" + err.Error()
+		}
+
+	} else if strings.Contains(urlRaw, "/album/") {
 		fmt.Println("Album")
 		storefront, albumId = checkUrl(urlRaw)
 		err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
@@ -2205,7 +2207,7 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		storefront, albumId = checkUrlStation(urlRaw)
 		if len(Config.MediaUserToken) <= 50 {
 			resp.Info = "meida-user-token is not set, skip station dl"
-			return
+
 		}
 		err := ripStation(albumId, token, storefront, Config.MediaUserToken)
 		if err != nil {
@@ -2219,7 +2221,6 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 
 func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
 	zipPath := albumDir + ".zip"
-
 	// 1. 打包
 	cmd := exec.Command(Config.ZipPath, "-r", "-0", zipPath, albumDir)
 	if err := cmd.Run(); err != nil {
@@ -2300,7 +2301,9 @@ func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
 	// 删除临时目录和 zip
 	os.RemoveAll(albumDir)
 	os.Remove(zipPath)
-
+	if resp.Link == "" {
+		err = errors.New("failed to get upload link")
+	}
 	if err := ws.WriteJSON(resp); err != nil {
 		log.Printf("write error: %v", err)
 	}
