@@ -55,6 +55,7 @@ var (
 	okDict         = make(map[string][]int)
 	token          string
 	taskQueue      = make(chan structs.Task, 100)
+	latestPath     string
 )
 
 func NewDefaultConfig() *structs.ConfigSet {
@@ -1528,6 +1529,7 @@ func ripAlbum(albumId string, token string, storefront string, mediaUserToken st
 			ripTrack(&album.Tracks[i-1], token, mediaUserToken)
 		}
 	}
+	latestPath = albumFolderPath
 	return nil
 
 }
@@ -2113,7 +2115,6 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 	var resp structs.Response
-	var albumDir string
 	var storefront, albumId string
 
 	if strings.Contains(urlRaw, "/music-video/") {
@@ -2146,8 +2147,7 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 			counter.Error++
 			return
 		}
-		counter.Success++
-		return
+		latestPath = mvSaveDir
 	}
 	if strings.Contains(urlRaw, "/song/") {
 		fmt.Printf("Song->")
@@ -2197,10 +2197,12 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		fmt.Println("Invalid type")
 	}
 
-	go uploadAlbum(albumDir, ws, resp)
+	go uploadAlbum(latestPath, ws, resp)
 }
 
 func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
+	exec.Command(Config.ZipPath, "-r", albumDir+".zip", albumDir).Run()
+	exec.Command("rm", "-rf", albumDir).Run()
 
 	if err := ws.WriteJSON(resp); err != nil {
 		log.Printf("write error: %v", err)
@@ -2746,6 +2748,5 @@ func ripSong(songId string, token string, storefront string, mediaUserToken stri
 		fmt.Println("Failed to rip song:", err)
 		return err
 	}
-
 	return nil
 }
