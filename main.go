@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,12 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/zhaarey/go-mp4tag"
 	"gopkg.in/yaml.v2"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 var (
@@ -1918,7 +1925,7 @@ func main() {
 		}()
 		http.HandleFunc("/ws", handleConnections)
 		// 启动服务器
-		log.Fatal(http.ListenAndServe(":8080", nil))
+		log.Fatal(http.ListenAndServe(":"+Config.WebSocketPort, nil))
 	}
 	if search_type != "" {
 		if len(args) == 0 {
@@ -2095,7 +2102,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		err := ws.ReadJSON(&msg)
 		if err != nil {
 			var resp structs.Response
-			resp.Errors = "read error: %v" + err.Error()
+			resp.Error = "read error: %v" + err.Error()
 			err := ws.WriteJSON(resp)
 			if err != nil {
 				print("Failed to write response in failure read:", err)
@@ -2123,11 +2130,11 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 			return
 		}
 		if len(Config.MediaUserToken) <= 50 {
-			resp.Infos = ": meida-user-token is not set, skip MV dl"
+			resp.Info = ": meida-user-token is not set, skip MV dl"
 			return
 		}
 		if _, err := exec.LookPath("mp4decrypt"); err != nil {
-			resp.Infos = ": mp4decrypt is not found, skip MV dl"
+			resp.Info = ": mp4decrypt is not found, skip MV dl"
 			return
 		}
 		mvSaveDir := strings.NewReplacer(
@@ -2143,7 +2150,7 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		storefront, albumId = checkUrlMv(urlRaw)
 		err := mvDownloader(albumId, mvSaveDir, token, storefront, Config.MediaUserToken, nil)
 		if err != nil {
-			resp.Errors = "Failed to dl MV:" + err.Error()
+			resp.Error = "Failed to dl MV:" + err.Error()
 			counter.Error++
 			return
 		}
@@ -2153,18 +2160,18 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		fmt.Printf("Song->")
 		storefront, songId := checkUrlSong(urlRaw)
 		if storefront == "" || songId == "" {
-			resp.Errors = "Invalid song URL format."
+			resp.Error = "Invalid song URL format."
 			return
 		}
 		err := ripSong(songId, token, storefront, Config.MediaUserToken)
 		if err != nil {
-			resp.Errors = "Failed to rip song:" + err.Error()
+			resp.Error = "Failed to rip song:" + err.Error()
 		}
 		return
 	}
 	parse, err := url.Parse(urlRaw)
 	if err != nil {
-		resp.Errors = "Invalid URL:" + err.Error()
+		resp.Error = "Invalid URL:" + err.Error()
 	}
 	var urlArg_i = parse.Query().Get("i")
 
@@ -2173,25 +2180,25 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 		storefront, albumId = checkUrl(urlRaw)
 		err := ripAlbum(albumId, token, storefront, Config.MediaUserToken, urlArg_i)
 		if err != nil {
-			resp.Errors = "Failed to rip album:" + err.Error()
+			resp.Error = "Failed to rip album:" + err.Error()
 		}
 	} else if strings.Contains(urlRaw, "/playlist/") {
 		fmt.Println("Playlist")
 		storefront, albumId = checkUrlPlaylist(urlRaw)
 		err := ripPlaylist(albumId, token, storefront, Config.MediaUserToken)
 		if err != nil {
-			resp.Errors = "Failed to rip playlist:" + err.Error()
+			resp.Error = "Failed to rip playlist:" + err.Error()
 		}
 	} else if strings.Contains(urlRaw, "/station/") {
 		fmt.Printf("Station")
 		storefront, albumId = checkUrlStation(urlRaw)
 		if len(Config.MediaUserToken) <= 50 {
-			resp.Infos = "meida-user-token is not set, skip station dl"
+			resp.Info = "meida-user-token is not set, skip station dl"
 			return
 		}
 		err := ripStation(albumId, token, storefront, Config.MediaUserToken)
 		if err != nil {
-			resp.Errors = "Failed to rip station:" + err.Error()
+			resp.Error = "Failed to rip station:" + err.Error()
 		}
 	} else {
 		fmt.Println("Invalid type")
@@ -2201,12 +2208,91 @@ func downloadUrl(id int, urlRaw string, ws *websocket.Conn) {
 }
 
 func uploadAlbum(albumDir string, ws *websocket.Conn, resp structs.Response) {
-	exec.Command(Config.ZipPath, "-r", albumDir+".zip", albumDir).Run()
-	exec.Command("rm", "-rf", albumDir).Run()
+	zipPath := albumDir + ".zip"
+
+	// 1. 打包
+	cmd := exec.Command(Config.ZipPath, "-r", "-0", zipPath, albumDir)
+	if err := cmd.Run(); err != nil {
+		resp.Error = fmt.Sprintf("zip failed: %v", err)
+		if err := ws.WriteJSON(resp); err != nil {
+			log.Printf("write error: %v", err)
+		}
+		return
+	}
+
+	// 2. 上传到 R2 (S3 兼容)
+	zipFile, err := os.Open(zipPath)
+	if err != nil {
+		resp.Error = fmt.Sprintf("open zip failed: %v", err)
+		os.RemoveAll(albumDir)
+		os.Remove(zipPath)
+
+		if err := ws.WriteJSON(resp); err != nil {
+			log.Printf("write error: %v", err)
+		}
+		return
+	}
+	defer zipFile.Close()
+
+	// 构建 S3 客户端
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			Config.S3AccessKeyID,
+			Config.S3SecretAccessKey,
+			"",
+		)),
+		config.WithRegion(Config.S3Region),
+		config.WithEndpointResolverWithOptions(
+			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				if service == s3.ServiceID {
+					return aws.Endpoint{URL: Config.S3Endpoint}, nil
+				}
+				return aws.Endpoint{}, fmt.Errorf("unknown service %s", service)
+			}),
+		),
+	)
+	if err != nil {
+		resp.Error = fmt.Sprintf("s3 config error: %v", err)
+		os.RemoveAll(albumDir)
+		os.Remove(zipPath)
+
+		if err := ws.WriteJSON(resp); err != nil {
+			log.Printf("write error: %v", err)
+		}
+		return
+	}
+
+	client := s3.NewFromConfig(cfg)
+	uploader := manager.NewUploader(client)
+
+	// key 应为文件名（根目录上传）
+	key := filepath.Base(zipPath)
+
+	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(Config.S3Bucket),
+		Key:    aws.String(key),
+		Body:   zipFile,
+	})
+	if err != nil {
+		resp.Error = fmt.Sprintf("upload to R2 failed: %v", err)
+		os.RemoveAll(albumDir)
+		os.Remove(zipPath)
+
+		if err := ws.WriteJSON(resp); err != nil {
+			log.Printf("write error: %v", err)
+		}
+		return
+	}
+
+	// 3. 设置 CDN 链接（确保 CDNUrl 以 / 结尾或 key 无前导 /）
+	resp.Link = Config.CDNUrl + key
+
+	// 删除临时目录和 zip
+	os.RemoveAll(albumDir)
+	os.Remove(zipPath)
 
 	if err := ws.WriteJSON(resp); err != nil {
 		log.Printf("write error: %v", err)
-		return
 	}
 }
 

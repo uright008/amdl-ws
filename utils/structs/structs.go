@@ -130,10 +130,10 @@ type Request struct {
 }
 
 type Response struct {
-	Id     int    `json:"id"`
-	Links  string `json:"links"`
-	Errors string `json:"error"`
-	Infos  string `json:"info"`
+	Id    int    `json:"id"`
+	Link  string `json:"link"`
+	Error string `json:"error"`
+	Info  string `json:"info"`
 }
 
 type Auth struct {
